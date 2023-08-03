@@ -1,0 +1,74 @@
+name: Continuous Delivery of Streamlit
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - '.github/workflows/cd_streamlit.yml'
+
+env:
+  GITHUB_SHA: ${{ github.sha }}
+  REGISTRY_HOSTNAME: asia.gcr.io
+  GCP_PROJECT_ID: my-gcp-proj
+  GCP_PROJECT_NUMBER: 1234567890123
+
+jobs:
+  build:
+    name: Deploy Streamlit App to Cloud Run
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install gcloud SDK
+        uses: google-github-actions/setup-gcloud@v0
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - id: auth
+        name: 'Authenticate to Google Cloud'
+        uses: google-github-actions/auth@v1
+        with:
+          create_credentials_file: 'true'
+          workload_identity_provider: 'projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider'
+          service_account: 'github-actions-deployer@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com'
+          access_token_lifetime: 1200s
+
+      - name: Configure docker to use the gcloud CLI
+        run: gcloud auth configure-docker --quiet
+
+      - id: image-url
+        name: Create Docker image url
+        run: |
+          echo "value=${{ env.REGISTRY_HOSTNAME }}/${{ env.GCP_PROJECT_ID }}/streamlit:latest" >> $GITHUB_OUTPUT
+
+      - name: Build and push docker image to GCR
+        run: |
+          docker build -t ${{ steps.image-url.outputs.value }} .
+          docker push ${{ steps.image-url.outputs.value }}
+
+      - name: Deploy Cloud Run
+        run: |
+          gcloud components install -q beta
+          gcloud beta run deploy streamlit \
+            --memory 4Gi \
+            --platform managed \
+            --region asia-northeast1 \
+            --port=8080 \
+            --image ${{ steps.image-url.outputs.value }} \
+            --ingress all \
+            --timeout 10m \
+            --allow-unauthenticated \
+            --set-env-vars "VAR1=${{ secrets.VAR1 }}, VAR2=${{ secrets.VAR2 }} \
+            --service-account "streamlit@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
+            --execution-environment gen2

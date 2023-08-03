@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - 8080:8080
+    environment:
+      - VAR1=$VAR1
+      - VAR2=$VAR2
